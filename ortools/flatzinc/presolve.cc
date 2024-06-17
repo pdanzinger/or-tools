@@ -563,7 +563,7 @@ void Presolver::SubstituteEverywhere(Model* model) {
 }
 
 void Presolver::SubstituteAnnotation(Annotation* ann) {
-  // TODO(user): Remove recursion.
+  // Recursion required for priority_search annotations
   switch (ann->type) {
     case Annotation::ANNOTATION_LIST:
     case Annotation::FUNCTION_CALL: {

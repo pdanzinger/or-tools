@@ -498,6 +498,7 @@ message DecisionStrategyProto {
     SELECT_LOWER_HALF = 2;
     SELECT_UPPER_HALF = 3;
     SELECT_MEDIAN_VALUE = 4;
+    PRIORITY_SEARCH = 5;
   }
   DomainReductionStrategy domain_reduction_strategy = 3;
 
@@ -511,6 +512,9 @@ message DecisionStrategyProto {
     int64 positive_coeff = 3;
   }
   repeated AffineTransformation transformations = 4;
+
+  // The searches to choose from if domain_reduction_strategy is set to PRIORITY_SEARCH.
+  repeated DecisionStrategyProto searches = 5;
 }
 
 // This message encodes a partial (or full) assignment of the variables of a

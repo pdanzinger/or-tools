@@ -98,6 +98,12 @@ struct CpModelProtoWithMapping {
   void FillReifOrImpliedConstraint(const fz::Constraint& fz_ct,
                                    ConstraintProto* ct);
 
+  // Translates a flatzinc search annotation into a DecisionStrategyProto.
+  // The parent parameter may be null and is only set if the annotation gets
+  // parsed as a child of a priority_search annotation
+  void TranslateSearchAnnotation(
+      const fz::Annotation& annotation, DecisionStrategyProto* parent);
+
   // Translates the flatzinc search annotations into the CpModelProto
   // search_order field.
   void TranslateSearchAnnotations(
@@ -863,45 +869,66 @@ void CpModelProtoWithMapping::FillReifOrImpliedConstraint(
   FillConstraint(copy, negated_ct);
 }
 
-void CpModelProtoWithMapping::TranslateSearchAnnotations(
-    const std::vector<fz::Annotation>& search_annotations) {
-  std::vector<fz::Annotation> flat_annotations;
-  for (const fz::Annotation& annotation : search_annotations) {
-    fz::FlattenAnnotations(annotation, &flat_annotations);
+void CpModelProtoWithMapping::TranslateSearchAnnotation(
+    const fz::Annotation& annotation, DecisionStrategyProto* parent) {
+
+  // If the annotation is a list, parse each child.
+  if (annotation.type == fz::Annotation::ANNOTATION_LIST ||
+      annotation.IsFunctionCallWithIdentifier("seq_search")) {
+    for (const fz::Annotation& inner : annotation.annotations) {
+      TranslateSearchAnnotation(inner, parent);
+    }
+
+    return;
   }
 
-  for (const fz::Annotation& annotation : flat_annotations) {
+  // Now the annotation may be int_search, bool_search, priority_search or
+  // something unknown.
+
+  if (annotation.IsFunctionCallWithIdentifier("int_search") ||
+      annotation.IsFunctionCallWithIdentifier("bool_search") ||
+      annotation.IsFunctionCallWithIdentifier("priority_search")) {
+    const std::vector<fz::Annotation>& args = annotation.annotations;
+    std::vector<fz::IntegerVariable*> vars;
+    args[0].AppendAllIntegerVariables(&vars);
+
+    DecisionStrategyProto* strategy;
+    if (parent == nullptr) {
+      strategy = proto.add_search_strategy();
+    } else {
+      strategy = parent->add_searches();
+    }
+
+    for (fz::IntegerVariable* v : vars) {
+      strategy->add_variables(gtl::FindOrDie(fz_var_to_index, v));
+    }
+
+    // Variable selection has a different position in priority_search
+    // compared to int_search
+    int chooseIndex =
+        annotation.IsFunctionCallWithIdentifier("priority_search") ? 2 : 1;
+    const fz::Annotation& choose = args[chooseIndex];
+    if (choose.id == "input_order") {
+      strategy->set_variable_selection_strategy(
+          DecisionStrategyProto::CHOOSE_FIRST);
+    } else if (choose.id == "first_fail") {
+      strategy->set_variable_selection_strategy(
+          DecisionStrategyProto::CHOOSE_MIN_DOMAIN_SIZE);
+    } else if (choose.id == "anti_first_fail") {
+      strategy->set_variable_selection_strategy(
+          DecisionStrategyProto::CHOOSE_MAX_DOMAIN_SIZE);
+    } else if (choose.id == "smallest") {
+      strategy->set_variable_selection_strategy(
+          DecisionStrategyProto::CHOOSE_LOWEST_MIN);
+    } else if (choose.id == "largest") {
+      strategy->set_variable_selection_strategy(
+          DecisionStrategyProto::CHOOSE_HIGHEST_MAX);
+    } else {
+      LOG(FATAL) << "Unsupported order: " << choose.id;
+    }
+
     if (annotation.IsFunctionCallWithIdentifier("int_search") ||
         annotation.IsFunctionCallWithIdentifier("bool_search")) {
-      const std::vector<fz::Annotation>& args = annotation.annotations;
-      std::vector<fz::IntegerVariable*> vars;
-      args[0].AppendAllIntegerVariables(&vars);
-
-      DecisionStrategyProto* strategy = proto.add_search_strategy();
-      for (fz::IntegerVariable* v : vars) {
-        strategy->add_variables(gtl::FindOrDie(fz_var_to_index, v));
-      }
-
-      const fz::Annotation& choose = args[1];
-      if (choose.id == "input_order") {
-        strategy->set_variable_selection_strategy(
-            DecisionStrategyProto::CHOOSE_FIRST);
-      } else if (choose.id == "first_fail") {
-        strategy->set_variable_selection_strategy(
-            DecisionStrategyProto::CHOOSE_MIN_DOMAIN_SIZE);
-      } else if (choose.id == "anti_first_fail") {
-        strategy->set_variable_selection_strategy(
-            DecisionStrategyProto::CHOOSE_MAX_DOMAIN_SIZE);
-      } else if (choose.id == "smallest") {
-        strategy->set_variable_selection_strategy(
-            DecisionStrategyProto::CHOOSE_LOWEST_MIN);
-      } else if (choose.id == "largest") {
-        strategy->set_variable_selection_strategy(
-            DecisionStrategyProto::CHOOSE_HIGHEST_MAX);
-      } else {
-        LOG(FATAL) << "Unsupported order: " << choose.id;
-      }
-
       const fz::Annotation& select = args[2];
       if (select.id == "indomain_min" || select.id == "indomain") {
         strategy->set_domain_reduction_strategy(
@@ -921,7 +948,28 @@ void CpModelProtoWithMapping::TranslateSearchAnnotations(
       } else {
         LOG(FATAL) << "Unsupported select: " << select.id;
       }
+    } else if (annotation.IsFunctionCallWithIdentifier("priority_search")) {
+      const fz::Annotation& child_searches = args[1];
+
+      for (const fz::Annotation& child : child_searches.annotations) {
+        DecisionStrategyProto* strategyList = strategy->add_searches();
+
+        // Translates recursively and adds the result to strategy->searches
+        TranslateSearchAnnotation(child, strategyList);
+      }
+
+      strategy->set_domain_reduction_strategy(
+          DecisionStrategyProto::PRIORITY_SEARCH);
     }
+
+  }
+
+}
+
+void CpModelProtoWithMapping::TranslateSearchAnnotations(
+    const std::vector<fz::Annotation>& search_annotations) {
+  for (const fz::Annotation& annotation : search_annotations) {
+    TranslateSearchAnnotation(annotation, nullptr);
   }
 }
 

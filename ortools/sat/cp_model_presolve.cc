@@ -5888,7 +5888,17 @@ void ApplyVariableMapping(const std::vector<int>& mapping,
 
   // Remap the search decision heuristic.
   // Note that we delete any heuristic related to a removed variable.
+  std::unordered_set<DecisionStrategyProto*> remainingStrategies;
   for (DecisionStrategyProto& strategy : *proto->mutable_search_strategy()) {
+    remainingStrategies.insert(&strategy);
+  }
+  while (!remainingStrategies.empty()) {
+    DecisionStrategyProto* strategyPointer = *remainingStrategies.begin();
+    DecisionStrategyProto& strategy = *strategyPointer;
+    remainingStrategies.erase(strategyPointer);
+    for (DecisionStrategyProto& child : *strategy.mutable_searches()) {
+      remainingStrategies.insert(&child);
+    }
     const DecisionStrategyProto copy = strategy;
     strategy.clear_variables();
     std::vector<int> new_indices(copy.variables().size(), -1);

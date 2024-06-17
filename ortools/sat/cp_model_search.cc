@@ -113,6 +113,224 @@ const std::function<BooleanOrIntegerLiteral()> ConstructSearchStrategyInternal(
   // Note that we copy strategies to keep the return function validity
   // independently of the life of the passed vector.
   return [&view, &parameters, random, strategies]() {
+
+    std::function<BooleanOrIntegerLiteral(const DecisionStrategyProto&)>
+        decideRecursively = [&view, &parameters, &random, &decideRecursively](const DecisionStrategyProto& strategy) {
+
+          DecisionStrategyProto::DomainReductionStrategy selection =
+              strategy.domain_reduction_strategy();
+
+          if (selection == DecisionStrategyProto::PRIORITY_SEARCH) {
+            // Collects all <candidate_value, index> pairs
+            // This makes use of the implicit sorting in std::set
+            std::set<std::pair<int, int>> all_candidates;
+
+            int t_index = 0;  // Index in strategy.transformations().
+            for (int i = 0; i < strategy.variables().size(); ++i) {
+              const int ref = strategy.variables(i);
+              const int var = PositiveRef(ref);
+              //if (view.IsFixed(var) || view.IsCurrentlyFree(var)) continue;
+
+              int64_t coeff(1);
+              int64_t offset(0);
+              while (t_index < strategy.transformations().size() &&
+                     strategy.transformations(t_index).index() < i) {
+                ++t_index;
+              }
+              if (t_index < strategy.transformations_size() &&
+                  strategy.transformations(t_index).index() == i) {
+                coeff = strategy.transformations(t_index).positive_coeff();
+                offset = strategy.transformations(t_index).offset();
+              }
+
+              // TODO(user): deal with integer overflow in case of wrongly specified
+              // coeff? Note that if this is filled by the presolve it shouldn't
+              // happen since any feasible value in the new variable domain should be
+              // a feasible value of the original variable domain.
+              int64_t value(0);
+              int64_t lb = view.Min(var);
+              int64_t ub = view.Max(var);
+              if (!RefIsPositive(ref)) {
+                lb = -view.Max(var);
+                ub = -view.Min(var);
+              }
+              switch (strategy.variable_selection_strategy()) {
+                case DecisionStrategyProto::CHOOSE_FIRST:
+                  value = i;
+                case DecisionStrategyProto::CHOOSE_LOWEST_MIN:
+                  value = coeff * lb + offset;
+                  break;
+                case DecisionStrategyProto::CHOOSE_HIGHEST_MAX:
+                  value = -(coeff * ub + offset);
+                  break;
+                case DecisionStrategyProto::CHOOSE_MIN_DOMAIN_SIZE:
+                  value = coeff * (ub - lb + 1);
+                  break;
+                case DecisionStrategyProto::CHOOSE_MAX_DOMAIN_SIZE:
+                  value = -coeff * (ub - lb + 1);
+                  break;
+                default:
+                  LOG(FATAL) << "Unknown VariableSelectionStrategy "
+                             << strategy.variable_selection_strategy();
+              }
+              all_candidates.insert(std::make_pair(value, i));
+            }
+
+            for (const auto& [candidate_value, candidate] : all_candidates) {
+              for (const DecisionStrategyProto& next : strategy.searches()[candidate].searches()) {
+                BooleanOrIntegerLiteral recursiveResult = decideRecursively(next);
+
+                if (recursiveResult.HasValue()) {
+                  return recursiveResult;
+                }
+              }
+            }
+
+            return BooleanOrIntegerLiteral();
+          }
+
+          int candidate;
+          int64_t candidate_value = std::numeric_limits<int64_t>::max();
+
+          // TODO(user): Improve the complexity if this becomes an issue which
+          // may be the case if we do a fixed_search.
+
+          // To store equivalent variables in randomized search.
+          std::vector<VarValue> active_refs;
+
+          int t_index = 0;  // Index in strategy.transformations().
+          for (int i = 0; i < strategy.variables().size(); ++i) {
+            const int ref = strategy.variables(i);
+            const int var = PositiveRef(ref);
+            if (view.IsFixed(var) || view.IsCurrentlyFree(var)) continue;
+
+            int64_t coeff(1);
+            int64_t offset(0);
+            while (t_index < strategy.transformations().size() &&
+                   strategy.transformations(t_index).index() < i) {
+              ++t_index;
+            }
+            if (t_index < strategy.transformations_size() &&
+                strategy.transformations(t_index).index() == i) {
+              coeff = strategy.transformations(t_index).positive_coeff();
+              offset = strategy.transformations(t_index).offset();
+            }
+
+            // TODO(user): deal with integer overflow in case of wrongly specified
+            // coeff? Note that if this is filled by the presolve it shouldn't
+            // happen since any feasible value in the new variable domain should be
+            // a feasible value of the original variable domain.
+            int64_t value(0);
+            int64_t lb = view.Min(var);
+            int64_t ub = view.Max(var);
+            if (!RefIsPositive(ref)) {
+              lb = -view.Max(var);
+              ub = -view.Min(var);
+            }
+            switch (strategy.variable_selection_strategy()) {
+              case DecisionStrategyProto::CHOOSE_FIRST:
+                break;
+              case DecisionStrategyProto::CHOOSE_LOWEST_MIN:
+                value = coeff * lb + offset;
+                break;
+              case DecisionStrategyProto::CHOOSE_HIGHEST_MAX:
+                value = -(coeff * ub + offset);
+                break;
+              case DecisionStrategyProto::CHOOSE_MIN_DOMAIN_SIZE:
+                value = coeff * (ub - lb + 1);
+                break;
+              case DecisionStrategyProto::CHOOSE_MAX_DOMAIN_SIZE:
+                value = -coeff * (ub - lb + 1);
+                break;
+              default:
+                LOG(FATAL) << "Unknown VariableSelectionStrategy "
+                           << strategy.variable_selection_strategy();
+            }
+            if (value < candidate_value) {
+              candidate = ref;
+              candidate_value = value;
+            }
+            if (strategy.variable_selection_strategy() ==
+                    DecisionStrategyProto::CHOOSE_FIRST &&
+                !parameters.randomize_search()) {
+              break;
+            } else if (parameters.randomize_search()) {
+              if (value <=
+                  candidate_value + parameters.search_randomization_tolerance()) {
+                active_refs.push_back({ref, value});
+              }
+            }
+          }
+
+          if (candidate_value == std::numeric_limits<int64_t>::max()) return BooleanOrIntegerLiteral();
+          if (parameters.randomize_search()) {
+            CHECK(!active_refs.empty());
+            const IntegerValue threshold(
+                candidate_value + parameters.search_randomization_tolerance());
+            auto is_above_tolerance = [threshold](const VarValue& entry) {
+              return entry.value > threshold;
+            };
+            // Remove all values above tolerance.
+            active_refs.erase(std::remove_if(active_refs.begin(), active_refs.end(),
+                                             is_above_tolerance),
+                              active_refs.end());
+            const int winner = absl::Uniform<int>(*random, 0, active_refs.size());
+            candidate = active_refs[winner].ref;
+          }
+
+          if (!RefIsPositive(candidate)) {
+            switch (selection) {
+              case DecisionStrategyProto::SELECT_MIN_VALUE:
+                selection = DecisionStrategyProto::SELECT_MAX_VALUE;
+                break;
+              case DecisionStrategyProto::SELECT_MAX_VALUE:
+                selection = DecisionStrategyProto::SELECT_MIN_VALUE;
+                break;
+              case DecisionStrategyProto::SELECT_LOWER_HALF:
+                selection = DecisionStrategyProto::SELECT_UPPER_HALF;
+                break;
+              case DecisionStrategyProto::SELECT_UPPER_HALF:
+                selection = DecisionStrategyProto::SELECT_LOWER_HALF;
+                break;
+              default:
+                break;
+            }
+          }
+
+          const int var = PositiveRef(candidate);
+          const int64_t lb = view.Min(var);
+          const int64_t ub = view.Max(var);
+          switch (selection) {
+            case DecisionStrategyProto::SELECT_MIN_VALUE:
+              return view.LowerOrEqual(var, lb);
+            case DecisionStrategyProto::SELECT_MAX_VALUE:
+              return view.GreaterOrEqual(var, ub);
+            case DecisionStrategyProto::SELECT_LOWER_HALF:
+              return view.LowerOrEqual(var, lb + (ub - lb) / 2);
+            case DecisionStrategyProto::SELECT_UPPER_HALF:
+              return view.GreaterOrEqual(var, ub - (ub - lb) / 2);
+            default:
+                  LOG(FATAL) << "Unknown DomainReductionStrategy "
+                  << strategy.domain_reduction_strategy();
+          }
+
+
+          return BooleanOrIntegerLiteral();
+    };
+
+    for (const DecisionStrategyProto& strategy : strategies) {
+      BooleanOrIntegerLiteral result = decideRecursively(strategy);
+      if (result.HasValue()) {
+        return result;
+      }
+    }
+
+    return BooleanOrIntegerLiteral();
+  };
+
+  // Note that we copy strategies to keep the return function validity
+  // independently of the life of the passed vector.
+  return [&view, &parameters, random, strategies]() {
     for (const DecisionStrategyProto& strategy : strategies) {
       int candidate;
       int64_t candidate_value = kint64max;

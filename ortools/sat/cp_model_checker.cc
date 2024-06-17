@@ -415,7 +415,8 @@ std::string ValidateSearchStrategies(const CpModelProto& model) {
         drs != DecisionStrategyProto::SELECT_MAX_VALUE &&
         drs != DecisionStrategyProto::SELECT_LOWER_HALF &&
         drs != DecisionStrategyProto::SELECT_UPPER_HALF &&
-        drs != DecisionStrategyProto::SELECT_MEDIAN_VALUE) {
+        drs != DecisionStrategyProto::SELECT_MEDIAN_VALUE &&
+        drs != DecisionStrategyProto::PRIORITY_SEARCH) {
       return absl::StrCat("Unknown or unsupported domain_reduction_strategy: ",
                           drs);
     }
