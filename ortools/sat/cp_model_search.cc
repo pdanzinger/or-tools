@@ -104,6 +104,12 @@ struct VarValue {
   int64_t value;
 };
 
+int intRand(const int & min, const int & max) {
+  static thread_local std::mt19937 generator;
+  std::uniform_int_distribution<int> distribution(min,max);
+  return distribution(generator);
+}
+
 const std::function<BooleanOrIntegerLiteral()> ConstructSearchStrategyInternal(
     const std::vector<DecisionStrategyProto>& strategies, Model* model) {
   const auto& view = *model->GetOrCreate<CpModelView>();
@@ -116,14 +122,13 @@ const std::function<BooleanOrIntegerLiteral()> ConstructSearchStrategyInternal(
 
     std::function<BooleanOrIntegerLiteral(const DecisionStrategyProto&)>
         decideRecursively = [&view, &parameters, &random, &decideRecursively](const DecisionStrategyProto& strategy) {
-
           DecisionStrategyProto::DomainReductionStrategy selection =
               strategy.domain_reduction_strategy();
 
           if (selection == DecisionStrategyProto::PRIORITY_SEARCH) {
             // Collects all <candidate_value, index> pairs
-            // This makes use of the implicit sorting in std::set
-            std::set<std::pair<int, int>> all_candidates;
+            std::vector<std::pair<int, int>> all_candidates;
+            all_candidates.reserve(strategy.variables().size()+1);
 
             int t_index = 0;  // Index in strategy.transformations().
             for (int i = 0; i < strategy.variables().size(); ++i) {
@@ -169,13 +174,17 @@ const std::function<BooleanOrIntegerLiteral()> ConstructSearchStrategyInternal(
                 case DecisionStrategyProto::CHOOSE_MAX_DOMAIN_SIZE:
                   value = -coeff * (ub - lb + 1);
                   break;
+                case DecisionStrategyProto::CHOOSE_RANDOM:
+                  value = intRand(1, std::numeric_limits<int32_t>::max());
+                  break;
                 default:
                   LOG(FATAL) << "Unknown VariableSelectionStrategy "
                              << strategy.variable_selection_strategy();
               }
-              all_candidates.insert(std::make_pair(value, i));
+              all_candidates.emplace_back(value, i);
             }
 
+            std::sort(all_candidates.begin(), all_candidates.end());
             for (const auto& [candidate_value, candidate] : all_candidates) {
               for (const DecisionStrategyProto& next : strategy.searches()[candidate].searches()) {
                 BooleanOrIntegerLiteral recursiveResult = decideRecursively(next);
@@ -241,6 +250,9 @@ const std::function<BooleanOrIntegerLiteral()> ConstructSearchStrategyInternal(
                 break;
               case DecisionStrategyProto::CHOOSE_MAX_DOMAIN_SIZE:
                 value = -coeff * (ub - lb + 1);
+                break;
+              case DecisionStrategyProto::CHOOSE_RANDOM:
+                value = intRand(1, std::numeric_limits<int32_t>::max());
                 break;
               default:
                 LOG(FATAL) << "Unknown VariableSelectionStrategy "

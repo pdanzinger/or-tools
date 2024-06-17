@@ -926,6 +926,9 @@ void CpModelProtoWithMapping::TranslateSearchAnnotation(
     } else if (choose.id == "largest") {
       strategy->set_variable_selection_strategy(
           DecisionStrategyProto::CHOOSE_HIGHEST_MAX);
+    } else if (choose.id == "random_order") {
+      strategy->set_variable_selection_strategy(
+          DecisionStrategyProto::CHOOSE_RANDOM);
     } else {
       LOG(FATAL) << "Unsupported order: " << choose.id;
     }

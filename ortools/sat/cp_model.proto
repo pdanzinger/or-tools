@@ -485,6 +485,7 @@ message DecisionStrategyProto {
     CHOOSE_HIGHEST_MAX = 2;
     CHOOSE_MIN_DOMAIN_SIZE = 3;
     CHOOSE_MAX_DOMAIN_SIZE = 4;
+    CHOOSE_RANDOM = 5;
   }
   VariableSelectionStrategy variable_selection_strategy = 2;
 

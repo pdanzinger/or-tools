@@ -406,7 +406,8 @@ std::string ValidateSearchStrategies(const CpModelProto& model) {
         vss != DecisionStrategyProto::CHOOSE_LOWEST_MIN &&
         vss != DecisionStrategyProto::CHOOSE_HIGHEST_MAX &&
         vss != DecisionStrategyProto::CHOOSE_MIN_DOMAIN_SIZE &&
-        vss != DecisionStrategyProto::CHOOSE_MAX_DOMAIN_SIZE) {
+        vss != DecisionStrategyProto::CHOOSE_MAX_DOMAIN_SIZE &&
+        vss != DecisionStrategyProto::CHOOSE_RANDOM) {
       return absl::StrCat(
           "Unknown or unsupported variable_selection_strategy: ", vss);
     }
