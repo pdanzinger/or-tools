@@ -1,3 +1,57 @@
+## OR-Tools 9.0 with MiniZinc Priority Search, MiniZinc hot start, and random variable selection strategies
+
+This repository contains modifications to Google's OR-Tools solver (version 9.0) I developed for my diploma thesis,
+**Optimizing Constraint Programming for Real World Scheduling of Test Laboratories** at **TU Wien**.
+
+Extensions are:
+
+- Implementing the MiniZinc priority_search annotation proposed by: Feydy, Thibaut, et al. "Priority search with MiniZinc." ModRef 2017: The Sixteenth International Workshop on Constraint Modelling and Reformulation.
+- Hot start support for MiniZinc, allowing the solver to take solution hints as input through MiniZinc annotations.
+- Random variable selection as a heuristic for custom search strategies.
+
+### Priority Search
+
+To use priority search, add the following code to your MiniZinc model:
+
+```
+annotation priority_search(array[int] of var int, array[int] of ann, ann, ann);
+```
+
+And use it like:
+
+```
+solve
+    :: priority_search(
+        [var1, var2, ...],
+        [seq_search([...]), seq_search([...]), ...],
+        smallest,
+        complete
+    )
+    satisfy;
+```
+
+### Hot Start
+
+To hot start the solver with a known good variable assignment, use the following code:
+
+```
+annotation hot_start_ortools(array[int] of var int,array[int] of ann);
+annotation hot_start_value(int);
+
+solve
+    :: hot_start_ortools(
+        [var1, var2, ...],
+        [hot_start_value(val1), hot_start_value(val2), ...]
+    )
+    satisfy;
+```
+
+The syntax is a bit indirect as a workaround to avoid having to modify the flatzinc parser in OR-Tools.
+
+### Random Variable Selection
+
+Use `random_order` as the variable selection strategy in any search annotation.
+
 # OR-Tools - Google Optimization Tools
 
 [![Build Status][github_status]][github_link]
