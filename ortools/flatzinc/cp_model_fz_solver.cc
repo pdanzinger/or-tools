@@ -109,6 +109,9 @@ struct CpModelProtoWithMapping {
   void TranslateSearchAnnotations(
       const std::vector<fz::Annotation>& search_annotations);
 
+  void TranslateHotStartAnnotation(
+      const std::vector<fz::Annotation>& search_annotations);
+
   // The output proto.
   CpModelProto proto;
   SatParameters parameters;
@@ -1015,6 +1018,60 @@ std::string SolutionString(
   return "";
 }
 
+
+void CpModelProtoWithMapping::TranslateHotStartAnnotation(
+    const std::vector<fz::Annotation>& search_annotations) {
+
+  for (const fz::Annotation& annotation : search_annotations) {
+
+    if (!annotation.IsFunctionCallWithIdentifier("hot_start_ortools")) {
+      continue;
+    }
+
+    // Check that the annotation is indeed a hot_start.
+    if (annotation.annotations.size() != 2) {
+      LOG(FATAL) << "Expected hot_start_ortools(array[int] of var int, array[int] of ann)";
+      return;
+    }
+
+
+
+    // The first part of the annotation contains the variables.
+    const fz::Annotation& var_annotation = annotation.annotations[0];
+    std::vector<fz::IntegerVariable*> vars;
+    var_annotation.AppendAllIntegerVariables(&vars);
+
+    std::vector<int64_t> vals;
+    for (auto val_ann : annotation.annotations[1].annotations) {
+      int64_t value = val_ann.annotations[0].interval_min;
+      vals.push_back(value);
+    }
+
+    if (vals.size() != vars.size() && vars.size() != 0) {
+      LOG(FATAL) << "Inconsistent hot_start annotation."
+                    "The number of variables " << vars.size() << " does "
+                                   "not match the number of values" << vals.size() << ".";
+      return;
+    }
+
+    if (vars.size() == 0) {
+      continue;
+    }
+
+    // Create a PartialVariableAssignment proto.
+    PartialVariableAssignment* const assignment = proto.mutable_solution_hint();
+    for (int i = 0; i < vars.size(); ++i) {
+      const int var_index = gtl::FindOrDie(fz_var_to_index, vars[i]);
+      const int64_t value = vals[i];
+
+      // Populate the solution_hint proto.
+      assignment->add_vars(var_index);
+      assignment->add_values(value);
+    }
+
+  }
+}
+
 std::string SolutionString(
     const fz::Model& model,
     const std::function<int64_t(fz::IntegerVariable*)>& value_func) {
@@ -1111,6 +1168,8 @@ void SolveFzWithCpModelProto(const fz::Model& fz_model,
 
   // Fill the search order.
   m.TranslateSearchAnnotations(fz_model.search_annotations());
+
+  m.TranslateHotStartAnnotation(fz_model.search_annotations());
 
   if (p.display_all_solutions && !m.proto.has_objective()) {
     // Enumerate all sat solutions.
