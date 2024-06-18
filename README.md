@@ -52,6 +52,14 @@ The syntax is a bit indirect as a workaround to avoid having to modify the flatz
 
 Use `random_order` as the variable selection strategy in any search annotation.
 
+### License
+
+My modifications to OR-Tools are released under the same Apache 2.0 license as OR-Tools itself.
+
+### Funding
+
+This work was financially supported by the Austrian Federal Ministry for Digital and Economic Affairs, the National Foundation for Research, Technology and Development and the Christian Doppler Research Association. Their support is gratefully acknowledged.
+
 # OR-Tools - Google Optimization Tools
 
 [![Build Status][github_status]][github_link]
